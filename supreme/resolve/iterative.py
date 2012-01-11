@@ -1,4 +1,4 @@
-__all__ = ['solve', 'default_camera', 'cost_squared_error', 'iresolve',
+__all__ = ['solve', 'yaw_solve', 'default_camera', 'cost_squared_error', 'iresolve',
            'initial_guess_avg', 'cost_prior_xsq']
 
 import numpy as np
@@ -18,9 +18,10 @@ log = supreme.config.get_log(__name__)
 from lsqr import lsqr
 from operators import bilinear, convolve, op_repeat
 import ordering
-from supreme.ext import poly_interp_op
+from supreme.ext import poly_interp_op_yaw, poly_interp_op
 
 import time
+import osgeo.gdal as gdal
 
 def solve(images, tf_matrices, scale, x0=None,
           tol=1e-10, iter_lim=None, damp=1e-1,
@@ -208,6 +209,145 @@ def solve(images, tf_matrices, scale, x0=None,
         raise ValueError('Invalid method (%s) specified.' % method)
 
     return x.reshape(oshape)
+
+def yaw_solve(yaw_image, yaw, scale,
+          tol=1e-10, iter_lim=None, damp=1e-1,
+          method='CG', norm=2):
+    """Super-resolve a nonzero yaw image by solving
+    a large, sparse set of linear equations.
+
+    This method approximates the camera with a downsampling operator,
+    using polygon interpolation.  The LSQR method is used
+    to solve the equation :math:`A\mathbf{x} = b` where :math:`A` is
+    the downsampling operator, :math:`\mathbf{x}` is the
+    high-resolution estimate (flattened in raster scan/
+    lexicographic order), and :math:`\mathbf{b}` is a vector
+    of all the yaw_image pixels.
+
+    Parameters
+    ----------
+    yaw_image : ndarray
+        Nonzero yaw input frame.
+    tf_matrix : (3, 3) ndarray
+        Transformation matrix that relates all yaw_image pixels 
+        to a reference high-resolution frame.
+    scale : float
+        The resolution of the output image is `scale` times the resolution
+        of the input images.
+    damp : float, optional
+        If an initial guess is provided, `damp` specifies how much that
+        estimate is weighed in the entire process.  A larger value of
+        `damp` results in a solution closer to `x0`, whereas a smaller
+        version of `damp` yields a solution closer to the solution
+        obtained without any initial estimate.
+    method : {'CG', 'LSQR', 'descent', 'L-BFGS-B'}
+        Whether to use conjugate gradients, least-squares, gradient descent
+        or L-BFGS-B to determine the solution.
+    norm : {1, 2}
+        Whether to use the L1 or L2 norm to measure errors between images.
+
+    Returns
+    -------
+    HR : ndarray
+        High-resolution estimate.
+
+    """
+
+    ishape = yaw_image.shape
+    oshape = yaw_image.shape
+
+    print "Constructing camera operator..."
+    op = poly_interp_op_yaw(oshape[0], oshape[1], ishape[0], ishape[1], yaw, scale, search_win=round(scale) * 2 + 1)
+
+    #dop = op.todense()
+    #dsDebug = gdal.GetDriverByName("GTIFF").Create('/tmp/debug.tif', opd.shape[1], opd.shape[0], 1, gdal.GDT_Float32)
+    #dsDebug.GetRasterBand(1).WriteArray(opd)
+    #dsDebug.FlushCache()
+
+    M = np.prod(ishape)
+    b = yaw_image.flat
+
+    atol = btol = conlim = tol
+    show = True
+    
+    # Construct the prior
+    opT = op.T
+    opT_sum1 = opT.sum(axis=1).flatten() + 0.00001 # add small bias to avoid division by zero
+    opTb = opT.dot(b)
+    x0 = opTb / opT_sum1 
+    return x0.reshape(oshape)
+
+    # Error and gradient functions, used in conjugate gradient optimisation
+    def sr_func(x, norm=norm):
+        return (np.linalg.norm(op * x - b, norm) ** 2 + \
+                damp * np.linalg.norm(x - x0.flat, norm) ** 2)
+
+    def sr_gradient(x, norm=norm):
+        # Careful! Mixture of sparse and dense operators.
+        #Axb = op * x - b
+        #nrm_sq = np.dot(Axb, Axb) # Dense
+        #Axbop = (op.T * Axb).T # Sparse
+        #return nrm_sq * Axbop
+        Axb = op * x - b
+        L = len(x)
+        if norm == 1:
+            xmx0 = x - x0.flat
+            term1 = np.linalg.norm(Axb, 1) * np.sign(Axb.T) * op
+            term2 = damp * np.linalg.norm(xmx0, 1) * np.sign(xmx0.flat)
+        elif norm == 2:
+            term1 = (Axb.T * op)
+            term2 = damp * (x - x0.flat)
+        else:
+            raise ValueError('Invalid norm for error measure (%s).' % norm)
+
+        return 2 * (term1 + term2)
+
+    print "Super resolving..."
+
+## Conjugate Gradient Optimisation
+    if method == 'CG':
+
+        x, fopt, f_calls, gcalls, warnflag = \
+           opt.fmin_cg(sr_func, x0, fprime=sr_gradient, gtol=0,
+                       disp=True, maxiter=iter_lim, full_output=True)
+
+    elif method == 'LSQR':
+
+## LSQR Optimisation
+##
+        x0 = x0.flat
+        b = b - op * x0
+        x, istop, itn, r1norm, r2norm, anorm, acond, arnorm, xnorm, var = \
+          lsqr(op, b, atol=atol, btol=btol,
+               conlim=conlim, damp=damp, show=show, iter_lim=iter_lim)
+        x = x0 + x
+
+    elif method == 'descent':
+
+## Steepest Descent Optimisation
+##
+        x = np.array(x0, copy=True).reshape(np.prod(x0.shape))
+        for i in range(50):
+            print (op.T * ((op * x) - b)).shape
+            print "Gradient descent step %d" % i
+            x += damp * -1 * (op.T * ((op * x) - b))
+            # Could add prior: + lam * (x - x0.flat))
+
+## L-BFGS-B
+    elif method == 'L-BFGS-B':
+        x, f, d = opt.fmin_l_bfgs_b(sr_func, x0.flat, fprime=sr_gradient)
+        print "L-BFGS-B converged after %d function calls." % d['funcalls']
+        print "Final function value:", f
+        print "Reason for termination:", d['task']
+
+    elif method == 'direct':
+        x = sparse.linalg.spsolve(op, b)
+
+    else:
+        raise ValueError('Invalid method (%s) specified.' % method)
+
+    return x.reshape(oshape)
+
 
 def initial_guess_avg(images, tf_matrices, scale, oshape):
     """From the given low-resolution images and transforms, make an

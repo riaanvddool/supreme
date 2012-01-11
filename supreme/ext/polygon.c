@@ -149,7 +149,7 @@ int poly_clip(int N, double* x, double* y,
 
         /* bump off the vertical */
         if (deltax == 0) {
-            deltax = x[i] > xleft ? -NEARZERO : NEARZERO;
+            deltax = x[i] > xleft ?-NEARZERO : NEARZERO;
         }
 
         /* bump off the horizontal */
@@ -166,7 +166,7 @@ int poly_clip(int N, double* x, double* y,
             xout = xleft;
         }
 
-        if (deltay > 0) { /* l[i] points up */
+        if (deltay < 0) { /* l[i] points up */
             yin = ybottom;
             yout = ytop;
         } else { /* l[i] points down */
@@ -252,6 +252,8 @@ int poly_clip(int N, double* x, double* y,
 
     return M;
 }
+
+
 
 void tf_polygon(int N, double* xp, double* yp, double* tf_M) {
     int i;
