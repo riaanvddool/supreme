@@ -14,7 +14,11 @@ cdef extern from "polygon.h":
     int poly_clip(int N, double* x, double* y,
                   double xleft, double xright, double ytop, double ybottom,
                   double* workx, double* worky)
+    int yaw_poly_clip(int N, double* x, double* y,
+                  double xleft, double xright, double ytop, double ybottom,
+                  double* workx, double* worky)
     double area(int N, double* px, double* py)
+    double area_gauss(int N, double* px, double* py, double gx, double gy, double sigma)
 
 cdef tf(double x, double y, np.ndarray M):
     cdef np.ndarray[np.double_t, ndim=2] H = M
@@ -35,7 +39,7 @@ cdef tf_polygon(int N, double* xp, double* yp, np.ndarray H_arr):
         xp[i], yp[i] = tf(xp[i], yp[i], H_arr)
 
 def poly_interp_op(int MM, int NN, np.ndarray[np.double_t, ndim=2] H,
-                   int M, int N, search_win=7, construct_prior=False):
+                   int M, int N, search_win=7):
     """
     Construct a linear interpolation operator based on polygon overlap.
 
@@ -136,9 +140,6 @@ def poly_interp_op(int MM, int NN, np.ndarray[np.double_t, ndim=2] H,
                     J.append((int)(ridx * NN + cidx))
                     V.append(a)
                     
-                    if construct_prior:
-                        
-
                     K += 1
 
             S = 0
@@ -261,6 +262,7 @@ def poly_interp_op_yaw(int MM, int NN,
     #for m in range(M/2,M/2+1):
     #    for n in range(N/2,N/2+1):
     for m in range(M):
+        print (m * 1.) / (M / 100.)
         for n in range(N):
             # Create pixel polygon
             #
@@ -341,11 +343,11 @@ def poly_interp_op_yaw(int MM, int NN,
                         drawPolygon(_rx, _ry, 5)
 
 
-                    verts = poly_clip(5, px, py,
+                    verts = yaw_poly_clip(5, px, py,
                                       xleft, xright, ytop, ybottom,
                                       workx, worky)
-                    a = area(verts, workx, worky)
-
+                    a = area_gauss(verts, workx, worky, nt + 0.5, mt + 0.5, 0.5)
+                    #a = area(verts, workx, worky)
 
                     if debug and a > 0.:
                         for i in range(verts):

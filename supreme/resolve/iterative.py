@@ -103,6 +103,7 @@ def solve(images, tf_matrices, scale, x0=None,
     else:
         raise ValueError('Invalid operator requested (%s).' % operator)
 
+
 ##  Visualise mapping of frames
 ##
 ##     import matplotlib.pyplot as plt
@@ -138,6 +139,14 @@ def solve(images, tf_matrices, scale, x0=None,
 
     atol = btol = conlim = tol
     show = True
+
+    # Construct the prior
+    opT = op.T
+    opT_sum1 = opT.sum(axis=1).flatten() + 0.00001 # add small bias to avoid division by zero
+    opTb = opT.dot(b)
+    x0 = opTb / opT_sum1 
+
+    #return x0.reshape(oshape)
 
     # Error and gradient functions, used in conjugate gradient optimisation
     def sr_func(x, norm=norm):
@@ -275,7 +284,7 @@ def yaw_solve(yaw_image, yaw, scale,
     opT_sum1 = opT.sum(axis=1).flatten() + 0.00001 # add small bias to avoid division by zero
     opTb = opT.dot(b)
     x0 = opTb / opT_sum1 
-    return x0.reshape(oshape)
+    #return x0.reshape(oshape)
 
     # Error and gradient functions, used in conjugate gradient optimisation
     def sr_func(x, norm=norm):
@@ -346,7 +355,7 @@ def yaw_solve(yaw_image, yaw, scale,
     else:
         raise ValueError('Invalid method (%s) specified.' % method)
 
-    return x.reshape(oshape)
+    return x.reshape(oshape), x0.reshape(oshape)
 
 
 def initial_guess_avg(images, tf_matrices, scale, oshape):

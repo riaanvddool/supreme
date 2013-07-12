@@ -56,6 +56,7 @@ yaw_image_filename = parser.largs[0]
 
 dsYawImage = gdal.Open(yaw_image_filename)
 dsHighRes = gdal.GetDriverByName("GTIFF").Create('/tmp/out.tif', dsYawImage.RasterXSize, dsYawImage.RasterYSize, dsYawImage.RasterCount, gdal.GDT_Float32)
+dsAverage = gdal.GetDriverByName("GTIFF").Create('/tmp/avg.tif', dsYawImage.RasterXSize, dsYawImage.RasterYSize, dsYawImage.RasterCount, gdal.GDT_Float32)
 
 d = options.__dict__
 print "Input Parameters"
@@ -68,10 +69,12 @@ print "------------------------"
 for band in range(1,dsYawImage.RasterCount+1):
     print "Band", band
     image = dsYawImage.GetRasterBand(band).ReadAsArray()
-    out = yaw_solve(image, yaw, scale=options.scale, tol=0.1,
+    out, avg = yaw_solve(image, yaw, scale=options.scale, tol=0.1,
                     damp=options.damp, iter_lim=None,
                     method=options.method,
                     norm=options.norm)
     dsHighRes.GetRasterBand(band).WriteArray(out)
+    dsAverage.GetRasterBand(band).WriteArray(avg)
 
 dsHighRes.FlushCache()
+dsAverage.FlushCache()
